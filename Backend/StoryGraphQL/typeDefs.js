@@ -3,6 +3,12 @@ const { gql } = require("apollo-server-express");
 module.exports = gql`
   scalar Upload
 
+  type StoryReply {
+    id: ID
+    message: String
+    repliedAt: String
+  }
+
   type Story {
     id: ID!
     userId: ID!
@@ -15,6 +21,7 @@ module.exports = gql`
     expiresAt: String!
     location: String
     viewers: [String]
+    replies: [StoryReply]
   }
 
   type Query {
@@ -37,6 +44,8 @@ module.exports = gql`
     uploadStoryMedia(file: Upload!): String
     viewStory(userId: ID!, statusId: ID!) : [Story]
     deleteStory(userId: ID!, statusId: ID!) : String
+
+    replyToStory(storyId: ID!, userId: ID!, message: String!): Story
 
   }
 `;

@@ -178,6 +178,15 @@ export const LOGOUT_MUTATION = gql`
   }
 `;
 
+export const REPLY_TO_STORY = gql`
+  mutation ReplyToStory($storyId: ID!, $userId: ID!, $message: String!) {
+    replyToStory(storyId: $storyId, userId: $userId, message: $message) {
+      id
+      replies { id message }
+    }
+  }
+`;
+
 export const GET_ALL_USERS = gql`
   query GetAllUsers {
     users {

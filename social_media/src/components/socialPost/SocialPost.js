@@ -637,9 +637,11 @@ const SocialPost = ({
                         <span className="font-semibold">
                           {comment.user?.name || comment.username}
                           {/* Show "author" label if commenter is the post owner */}
-                          {(comment.user?.id === postData?.createdBy?.id || 
-                            comment.user?.id === postData?.user?.id || 
-                            comment.user?.id === postData?.userId) && (
+                          {comment.user?.id && (
+                            comment.user.id === postData?.createdBy?.id ||
+                            comment.user.id === postData?.user?.id ||
+                            comment.user.id === postData?.userId
+                          ) && (
                             <span className="ml-1 text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-medium">
                               author
                             </span>

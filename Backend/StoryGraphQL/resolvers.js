@@ -4,6 +4,10 @@ const { uploadToCloudinary } = require("../Utils/cloudinary");
 const mongoose = require("mongoose");
 
 module.exports = {
+  // Map reply.userId -> GraphQL field id
+  StoryReply: {
+    id: (reply) => (reply && (reply.userId || reply.id))
+  },
   Query: {
     getStories: async (_, { userId }) => {
       try {
@@ -166,6 +170,7 @@ module.exports = {
           createdAt: now.toISOString(),
           expiresAt: expiresAt.toISOString(),
           viewers: [],
+          replies: [{ userId: null, message: null, repliedAt: null }],
         });
 
         const savedStory = await story.save();
@@ -225,6 +230,50 @@ module.exports = {
       } catch (err) {
         console.error("Delete story error:", err);
         throw new Error(err.message);
+      }
+    },
+
+    replyToStory: async (_, { storyId, userId, message }) => {
+      try {
+        if (!storyId || !userId || !message) {
+          throw new Error("storyId, userId and message are required");
+        }
+
+        const story = await Story.findById(storyId);
+        if (!story) throw new Error("Story not found");
+
+        // Ensure array
+        const existingReplies = Array.isArray(story.replies) ? story.replies : [];
+
+        // Find a placeholder like { userId: null, message: null } or legacy { id: null, message: null }
+        const placeholderIndex = existingReplies.findIndex(r => r && (r.userId == null || r.id == null) && (r.message == null || r.message === ''));
+
+        if (placeholderIndex >= 0) {
+          // Update in-place
+          const placeholder = story.replies[placeholderIndex];
+          if (placeholder) {
+            placeholder.userId = new mongoose.Types.ObjectId(userId);
+            if (typeof placeholder.id !== 'undefined') {
+              // Normalize legacy field away
+              try { delete placeholder.id; } catch (_) {}
+            }
+            placeholder.message = message;
+            placeholder.repliedAt = new Date().toISOString();
+            story.markModified('replies');
+          }
+        } else {
+          // No placeholder found, append new reply
+          existingReplies.push({ userId: new mongoose.Types.ObjectId(userId), message, repliedAt: new Date().toISOString() });
+          story.replies = existingReplies;
+        }
+
+        await story.save();
+
+        // Return the latest document
+        return await Story.findById(storyId);
+      } catch (err) {
+        console.error("Reply to story error:", err);
+        throw new Error(err.message || "Failed to reply to story");
       }
     },
   },

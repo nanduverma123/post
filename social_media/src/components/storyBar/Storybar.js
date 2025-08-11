@@ -237,40 +237,17 @@ const StoryBar = ({ storyBarRef, scrollStories, userAvatarUrl }) => {
       
       console.log(`👆 User ${userStoryData.user.name} clicked ${newClickCount} times, showing story index ${storyIndexToShow}`);
       
-      // Create ordered list of users with stories
-      const usersWithStories = [];
-      
-      // Add current user first if they have stories
-      if (user && userStories[user.id]) {
-        // Get the latest user data from meData instead of cached user
-        const latestCurrentUserData = meData?.getMe || user;
-        usersWithStories.push({
-          userId: user.id,
-          userData: latestCurrentUserData,
-          stories: userStories[user.id].stories
-        });
-      }
-      
-      // Add other users with stories (sorted by latest story)
-      Object.values(userStories)
-        .filter(({ user: userData }) => userData.id !== user?.id)
-        .sort((a, b) => {
-          // Sort users by their latest story timestamp (newest first)
-          // Use lastStoryTime if available, otherwise fallback to first story's createdAt
-          const aTime = a.lastStoryTime || (a.stories[0] ? new Date(a.stories[0].createdAt).getTime() : 0);
-          const bTime = b.lastStoryTime || (b.stories[0] ? new Date(b.stories[0].createdAt).getTime() : 0);
-          
-          return bTime - aTime; // Newest first (descending order)
-        })
-        .forEach(({ user: userData, stories }) => {
-          // Get the latest user data from usersData instead of cached userData
-          const latestUserData = usersData?.users?.find(u => u.id === userData.id) || userData;
-          usersWithStories.push({
-            userId: userData.id,
-            userData: latestUserData,
-            stories
-          });
-        });
+      // Always show ONLY the clicked user's stories in the viewer
+      const clickedIsCurrentUser = user && userId === user.id;
+      const clickedUserData = clickedIsCurrentUser
+        ? (meData?.getMe || user)
+        : (usersData?.users?.find(u => u.id === userId) || (userStories[userId]?.user));
+
+      const usersWithStories = [{
+        userId,
+        userData: clickedUserData,
+        stories: userStories[userId].stories
+      }];
       
       // Find the index of clicked user
       const clickedUserIndex = usersWithStories.findIndex(u => u.userId === userId);
@@ -547,32 +524,13 @@ const StoryBar = ({ storyBarRef, scrollStories, userAvatarUrl }) => {
     
     console.log(`👆 Own story clicked ${newClickCount} times, showing story index ${storyIndexToShow}`);
     
-    // Create ordered list of users with stories (start with current user)
-    // Get the latest user data from meData instead of cached user
+    // Only include current user's stories in the viewer
     const latestCurrentUserData = meData?.getMe || user;
     const usersWithStories = [{
       userId: user.id,
       userData: latestCurrentUserData,
       stories: myStories
     }];
-    
-    // Add other users with stories
-    Object.values(userStories)
-      .filter(({ user: userData }) => userData.id !== user?.id)
-      .sort((a, b) => {
-        const aTime = a.lastStoryTime || (a.stories[0] ? new Date(a.stories[0].createdAt).getTime() : 0);
-        const bTime = b.lastStoryTime || (b.stories[0] ? new Date(b.stories[0].createdAt).getTime() : 0);
-        return bTime - aTime;
-      })
-      .forEach(({ user: userData, stories }) => {
-        // Get the latest user data from usersData instead of cached userData
-        const latestUserData = usersData?.users?.find(u => u.id === userData.id) || userData;
-        usersWithStories.push({
-          userId: userData.id,
-          userData: latestUserData,
-          stories
-        });
-      });
     
     setAllUsersWithStories(usersWithStories);
     setCurrentUserIndex(0); // Always start with current user

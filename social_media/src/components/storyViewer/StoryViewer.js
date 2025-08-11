@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useMutation } from '@apollo/client';
+import { REPLY_TO_STORY } from '../../graphql/mutations';
+import InstagramActionPopup from '../notifications/InstagramActionPopup';
+import { VIEW_STORY } from '../../graphql/mutations';
 import { FaChevronLeft, FaChevronRight, FaTimes, FaHeart, FaPaperPlane } from 'react-icons/fa';
 import { BsThreeDots } from 'react-icons/bs';
 import './StoryViewer.css';
@@ -10,15 +14,27 @@ const StoryViewer = ({ stories, currentStoryIndex, onClose, onNext, onPrevious, 
   const [showReplyInput, setShowReplyInput] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showReplySuccess, setShowReplySuccess] = useState(false);
   
   // User navigation states
   const [currentUserIdx, setCurrentUserIdx] = useState(currentUserIndex || 0);
   const [currentUserStories, setCurrentUserStories] = useState(stories);
   
   const progressRef = useRef(null);
+  const viewedStoriesRef = useRef(new Set());
+  const [viewStory] = useMutation(VIEW_STORY);
   const storyDuration = 5000; // 5 seconds per story
 
   const currentStory = currentUserStories[currentIndex];
+
+  // Pause auto-progress when reply input is open
+  useEffect(() => {
+    if (showReplyInput) {
+      setIsPaused(true);
+    } else {
+      setIsPaused(false);
+    }
+  }, [showReplyInput]);
 
   // Function to get latest user data from MongoDB ONLY - FIXED PROPS STRUCTURE
   const getLatestUserData = (story) => {
@@ -245,6 +261,19 @@ const StoryViewer = ({ stories, currentStoryIndex, onClose, onNext, onPrevious, 
     setProgress(0);
   }, [currentIndex]);
 
+  // Mark story as viewed when it becomes current
+  useEffect(() => {
+    const viewerId = meData?.id || currentUser?.id;
+    if (!currentStory || !viewerId) return;
+    if (currentStory.userId === viewerId || currentStory.user?.id === viewerId) return; // don't count self-views
+    if (viewedStoriesRef.current.has(currentStory.id)) return; // avoid duplicate calls
+    viewedStoriesRef.current.add(currentStory.id);
+    viewStory({ variables: { userId: viewerId, statusId: currentStory.id } }).catch(err => {
+      console.error('viewStory failed', err);
+      viewedStoriesRef.current.delete(currentStory.id); // allow retry
+    });
+  }, [currentStory, meData?.id, currentUser?.id, viewStory]);
+
   // User navigation functions
   const handleNextUser = () => {
     if (allUsersWithStories && currentUserIdx < allUsersWithStories.length - 1) {
@@ -316,12 +345,24 @@ const StoryViewer = ({ stories, currentStoryIndex, onClose, onNext, onPrevious, 
     }
   };
 
-  const handleReply = () => {
-    if (replyText.trim()) {
-      // TODO: Send reply to story owner
-      console.log('Reply sent:', replyText);
+  const [replyToStoryMutation, { loading: replyLoading }] = useMutation(REPLY_TO_STORY);
+
+  const handleReply = async () => {
+    if (!replyText.trim() || !currentStory) return;
+    try {
+      await replyToStoryMutation({
+        variables: {
+          storyId: currentStory.id,
+          userId: (meData?.id || currentUser?.id),
+          message: replyText.trim(),
+        },
+      });
+
+      setShowReplySuccess(true);
       setReplyText('');
       setShowReplyInput(false);
+    } catch (e) {
+      console.error('Failed to reply to story', e);
     }
   };
 
@@ -369,6 +410,13 @@ const StoryViewer = ({ stories, currentStoryIndex, onClose, onNext, onPrevious, 
   return (
     <div className="story-viewer-overlay">
       <div className="story-viewer-container">
+        <InstagramActionPopup
+          type="comment"
+          message="You replied to this story"
+          isVisible={showReplySuccess}
+          onClose={() => setShowReplySuccess(false)}
+          duration={2000}
+        />
         {/* Progress bars */}
         <div className="story-progress-container">
           {currentUserStories.map((_, index) => (

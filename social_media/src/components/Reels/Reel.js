@@ -4,7 +4,7 @@ import { useQuery, useMutation } from '@apollo/client';
 import { useNavigate } from 'react-router-dom';
 import { GET_ALL_POSTS, GET_ALL_VIDEOS, LIKE_VIDEO, COMMENT_ON_VIDEO, INCREMENT_VIDEO_VIEWS, FOLLOW_AND_UNFOLLOW, DELETE_VIDEO } from '../../graphql/mutations';
 import { GetTokenFromCookie } from '../../components/getToken/GetToken';
-import { Heart, MessageCircleMore, Share2, Bookmark, Ellipsis, Volume2, VolumeOff } from 'lucide-react';
+import { Heart, MessageCircleMore, Share2, Bookmark, Ellipsis, Volume2, VolumeOff, CirclePause, CirclePlay, ArrowLeftFromLine } from 'lucide-react';
 import ShareModal from '../share/ShareModal';
 import ProfileCard from './ProfileCard';
 import { useReelNotifications } from '../../utils/reelNotifications';
@@ -33,8 +33,8 @@ const Reel = () => {
   const [followingUsers, setFollowingUsers] = useState(new Set());
   // Force re-render trigger
   const [updateTrigger, setUpdateTrigger] = useState(0);
-  // Mute/unmute state - start muted for autoplay compatibility
-  const [isMuted, setIsMuted] = useState(true);
+  // Mute/unmute state - start unmuted by default
+  const [isMuted, setIsMuted] = useState(false);
   const videoRef = useRef(null);
   // Animation state
   const [isAnimating, setIsAnimating] = useState(false);
@@ -43,6 +43,10 @@ const Reel = () => {
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   // Video playing state
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  // Add state for play icon fade
+  const [showPlayIcon, setShowPlayIcon] = useState(false);
+  // Unmute hint when autoplay with sound is blocked
+  const [showUnmuteHint, setShowUnmuteHint] = useState(false);
   const handleMuteToggle = () => {
     setIsMuted((prev) => !prev);
     if (videoRef.current) {
@@ -55,9 +59,10 @@ const Reel = () => {
     if (!hasUserInteracted) {
       setHasUserInteracted(true);
       console.log('🎬 User interaction detected, autoplay enabled');
-      
-      // Try to play current video after user interaction
-      if (videoRef.current && videoRef.current.paused) {
+      // Unmute on first interaction and try to play with sound
+      setIsMuted(false);
+      if (videoRef.current) {
+        videoRef.current.muted = false;
         const playPromise = videoRef.current.play();
         if (playPromise !== undefined) {
           playPromise.catch(error => {
@@ -66,6 +71,8 @@ const Reel = () => {
         }
       }
     }
+    // Hide hint once user interacts
+    setShowUnmuteHint(false);
   };
   // Mutations
   const [followUser] = useMutation(FOLLOW_AND_UNFOLLOW);
@@ -222,10 +229,32 @@ const Reel = () => {
   // Additional mutations
   const [incrementVideoViews] = useMutation(INCREMENT_VIDEO_VIEWS);
 
-  // Helper function to get consistent user ID
+  // Helper function to get consistent user ID (handles Buffer-like objects)
   const getUserId = (user) => {
-    if (!user?.id) return null;
-    return user.id.toString();
+    const rawId = user?.id;
+    if (!rawId) return null;
+    if (typeof rawId === 'string' || typeof rawId === 'number') {
+      return rawId.toString();
+    }
+    // Handle Mongo/ObjectId represented as Buffer when serialized to JSON
+    if (typeof rawId === 'object') {
+      // Common shape: { $oid: '...' }
+      if (typeof rawId.$oid === 'string') return rawId.$oid;
+      // Node Buffer JSON: { type: 'Buffer', data: [ ... ] }
+      if (rawId.type === 'Buffer' && Array.isArray(rawId.data)) {
+        const hex = rawId.data
+          .map((byte) => Number(byte).toString(16).padStart(2, '0'))
+          .join('');
+        return hex;
+      }
+      // Fallback: try toString safely
+      try {
+        return String(rawId);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
   };
 
   // Helper function to check if user is being followed
@@ -294,6 +323,10 @@ const Reel = () => {
         video.currentTime = 0;
       }
     });
+    // Play the current video using videoRef
+    if (videoRef.current && videoRef.current.paused) {
+      videoRef.current.play().catch(() => {});
+    }
   };
 
   // Simple video visibility management
@@ -304,6 +337,36 @@ const Reel = () => {
       videoRef.current.style.opacity = '1';
     }
   }, [currentVideoIndex]);
+
+  // Attempt to autoplay with sound; if blocked, fall back to muted and show a hint
+  const attemptPlayWithSound = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    try {
+      el.muted = isMuted; // expected false initially
+      el.volume = 1.0;
+      const playPromise = el.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        playPromise
+          .then(() => {
+            setIsVideoPlaying(true);
+            if (!el.muted) setShowUnmuteHint(false);
+          })
+          .catch(err => {
+            console.log('🎬 Autoplay with sound blocked, falling back to muted:', err?.name || err);
+            el.muted = true;
+            setIsMuted(true);
+            setShowUnmuteHint(true);
+            el.play().catch(() => {});
+          });
+      }
+    } catch (e) {
+      el.muted = true;
+      setIsMuted(true);
+      setShowUnmuteHint(true);
+      try { el.play().catch(() => {}); } catch {}
+    }
+  };
 
   // Log errors when they occur
   useEffect(() => {
@@ -654,24 +717,29 @@ const Reel = () => {
       }
     });
     
-    // Play the current video
+    // Play the current video (try with sound first)
     const currentVideoEl = allVideoEls[currentVideoIndex];
     if (currentVideoEl) {
-      console.log('🎬 Attempting to play video at index:', currentVideoIndex);
-      const playPromise = currentVideoEl.play();
-      if (playPromise !== undefined) {
-        playPromise.then(() => {
-          console.log('🎬 Successfully started playing video:', currentVideoIndex);
-          setIsVideoPlaying(true);
-        }).catch(error => {
-          console.log('🎬 Failed to play video:', currentVideoIndex, error);
-          setIsVideoPlaying(false);
-        });
-      }
+      console.log('🎬 Attempting to play video at index (with sound):', currentVideoIndex);
+      attemptPlayWithSound();
     } else {
       console.log('🎬 No video element found at index:', currentVideoIndex);
     }
   }, [currentVideoIndex]);
+
+  // Auto-play first reel on initial load - try with sound first
+  useEffect(() => {
+    if (currentVideoIndex === 0 && allVideos.length > 0 && videoRef.current) {
+      attemptPlayWithSound();
+    }
+  }, [allVideos, currentVideoIndex]);
+
+  // Sync isVideoPlaying state with actual video element on mount and when videoRef changes
+  useEffect(() => {
+    if (videoRef.current && !videoRef.current.paused) {
+      setIsVideoPlaying(true);
+    }
+  }, [videoRef, currentVideoIndex]);
 
   // Render individual reel card
   const renderReelCard = (video, index, offset = 0) => {
@@ -696,34 +764,11 @@ const Reel = () => {
       >
         <div className="relative w-full h-full bg-black">
           {/* Debug info */}
-          {offset === 0 && (
+          {/* {offset === 0 && (
             <div className="absolute top-2 left-2 text-white text-xs bg-black bg-opacity-50 p-1 rounded z-20">
               Video {currentVideoIndex}: {video.videoUrl ? 'Available' : 'Missing'}
             </div>
-          )}
-          
-          {/* Play button overlay for when autoplay fails */}
-          {offset === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-30 z-10">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleUserInteraction();
-                  if (videoRef.current) {
-                    console.log('🎬 Manual play button clicked');
-                    videoRef.current.play().catch(error => {
-                      console.log('🎬 Manual play failed:', error);
-                    });
-                  }
-                }}
-                className="bg-white bg-opacity-20 hover:bg-opacity-30 text-white p-4 rounded-full transition-all duration-200"
-              >
-                <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-              </button>
-            </div>
-          )}
+          )} */}
           
           <video
             ref={offset === 0 ? videoRef : null}
@@ -736,7 +781,7 @@ const Reel = () => {
             }}
             autoPlay={offset === 0}
             loop
-            muted={true}
+            muted={isMuted}
             playsInline
             preload="metadata"
             controls={false}
@@ -745,9 +790,13 @@ const Reel = () => {
             onLoadedData={() => console.log('📹 Video data loaded:', video.videoUrl)}
             onCanPlay={() => console.log('▶️ Video can play:', video.videoUrl)}
             onPlay={() => {
-              console.log('🎵 Video started playing:', video.videoUrl);
               if (offset === 0) {
                 setIsVideoPlaying(true);
+                if (hasUserInteracted) {
+                  setShowPlayIcon(true);
+                  setTimeout(() => setShowPlayIcon(false), 1000);
+                }
+                if (!isMuted) setShowUnmuteHint(false);
               }
             }}
             onPause={() => {
@@ -770,6 +819,25 @@ const Reel = () => {
             <source src={video.videoUrl} type="video/mp4" />
             Your browser does not support the video tag.
           </video>
+          {offset === 0 && showUnmuteHint && (
+            <div className="absolute top-4 left-4 z-30 bg-black/60 text-white text-xs px-3 py-2 rounded">
+              Tap volume to unmute
+            </div>
+          )}
+          {/* Overlay play/pause icons */}
+          {offset === 0 && hasUserInteracted && !isVideoPlaying && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+              <CirclePause size={80} color="#fff" style={{ filter: 'drop-shadow(0 2px 8px #0008)' }} />
+            </div>
+          )}
+          {offset === 0 && showPlayIcon && !isVideoPlaying && (
+            <div
+              className="absolute inset-0 flex items-center justify-center pointer-events-none z-30 transition-opacity duration-1000"
+              style={{ opacity: showPlayIcon ? 1 : 0 }}
+            >
+              <CirclePlay size={80} color="#fff" style={{ filter: 'drop-shadow(0 2px 8px #0008)' }} />
+            </div>
+          )}
           {/* Video info overlay - only show on current video */}
           {offset === 0 && (
             <div className="absolute bottom-4 left-4 right-4 text-white">
@@ -888,18 +956,32 @@ const Reel = () => {
                   {!isAnimating && (
                     <>
                       {/* Mute/unmute button top right of reel card */}
+                      {!showCommentBox && (
+                        <button
+                          onClick={handleMuteToggle}
+                          className="absolute top-4 right-4 z-30 bg-white/80 rounded-full p-2 shadow hover:bg-white"
+                          style={{ 
+                            border: '1px solid #e5e7eb'
+                          }}
+                        >
+                          {isMuted ? (
+                            <VolumeOff className="w-6 h-6 text-black" />
+                          ) : (
+                            <Volume2 className="w-6 h-6 text-black" />
+                          )}
+                        </button>
+                      )}
+                      {/* Back icon outside top-left of reel card */}
                       <button
-                        onClick={handleMuteToggle}
-                        className="absolute top-4 right-4 z-30 bg-white/80 rounded-full p-2 shadow hover:bg-white"
+                        onClick={() => navigate(-1)}
+                        className="absolute z-30 bg-white/80 rounded-full p-2 shadow hover:bg-white"
                         style={{ 
-                          border: '1px solid #e5e7eb'
+                          border: '1px solid #e5e7eb',
+                          top: '1rem',
+                          left: '-3.5rem'
                         }}
                       >
-                        {isMuted ? (
-                          <VolumeOff className="w-6 h-6 text-black" />
-                        ) : (
-                          <Volume2 className="w-6 h-6 text-black" />
-                        )}
+                        <ArrowLeftFromLine className="w-6 h-6 text-black" />
                       </button>
                       {/* Lucide icons vertical stack - outside right of reel card */}
                       <div
