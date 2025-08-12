@@ -330,6 +330,12 @@ getCommentDetails: async (_, { postId, commentId }) => {
         throw err;
       }
     },
+
+    getUserInformation: async (_, { id }) => {
+      const user = await User.findById(id);
+      if (!user) throw new Error("User not found");
+      return user;
+    },
   },
 
   Mutation: {
@@ -732,11 +738,7 @@ if (deletePost) {
       return targetUser;
     },
 
-    getUserInformation: async (_, { id }) => {
-      const user = await User.findById(id);
-      if (!user) throw new Error("User not found");
-      return user;
-    },
+    
 
     markNotificationsAsRead: async (_, { userId }) => {
       try {

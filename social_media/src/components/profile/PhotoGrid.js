@@ -81,7 +81,7 @@ export default function PhotoGrid({ photos, currentUser }) {
   // console.log("PhotoGrid first photo:", photos[0]);
   return (
     <div className="w-full flex justify-center">
-      <div className="grid grid-cols-3 gap-2 xs:gap-3 sm:gap-4 w-full max-w-[26rem]">
+      <div className="grid grid-cols-3 gap-2 xs:gap-3 sm:gap-4 w-full max-w-[28rem] md:max-w-[46rem]">
         {photos.map((photo, idx) => (
           <div
             key={idx}

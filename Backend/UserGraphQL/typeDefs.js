@@ -89,6 +89,7 @@ const typeDefs = gql`
      getUserNotifications(userId: ID!): [Notification]
     getUnreadNotificationsCount(userId: ID!): Int
     getCommentDetails(postId: ID!, commentId: ID!): Comment
+    getUserInformation(id: ID!): User
   }
 
   type Mutation {
@@ -126,7 +127,6 @@ const typeDefs = gql`
     ): User
 
     followAndUnfollow(id: ID!): User
-    getUserInformation(id: ID!): User
     markNotificationsAsRead(userId: ID!): String
     
     # Comment and Reply mutations
