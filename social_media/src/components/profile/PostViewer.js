@@ -21,13 +21,19 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
     const likesCount = Array.isArray(post.likes)
       ? post.likes.length
       : (typeof post.likes === 'number' ? post.likes : 0);
+    
+    // Ensure post has a valid ID for GraphQL operations
+    const postId = post.id || post._id || `post-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
     return {
       ...post,
+      id: postId,
       likes: likesArray,
       likesCount,
-      user: post.user || post.createdBy || { name: 'Unknown User', profileImage: null },
+      user: post.user || post.createdBy || { name: 'User', username: 'user', profileImage: null },
       caption: typeof post.caption === 'string' ? post.caption : '',
-      createdAt: post.createdAt || new Date().toISOString()
+      createdAt: post.createdAt || new Date().toISOString(),
+      comments: Array.isArray(post.comments) ? post.comments : []
     };
   };
 
@@ -117,9 +123,14 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
     const ov = postOverridesRef.current[pid];
 
     if (ov) {
+      // Use stored override values
       setLikesCount(typeof ov.likesCount === 'number' ? ov.likesCount : 0);
       setCommentsList(Array.isArray(ov.commentsList) ? ov.commentsList : (Array.isArray(currentPost.comments) ? currentPost.comments : []));
       setIsLiked(Boolean(ov.isLiked));
+      // Also restore liked comments state if stored
+      if (ov.likedComments) {
+        setLikedComments(ov.likedComments);
+      }
     } else {
       const initialLikes = Array.isArray(currentPost.likes) ? currentPost.likes.length : (typeof currentPost.likes === 'number' ? currentPost.likes : 0);
       setLikesCount(initialLikes);
@@ -132,9 +143,9 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
         setIsLiked(false);
       }
 
-      // initialize liked states for existing comment/reply likes for current user (for comment-like UI)
+      // initialize liked states for existing comment/reply likes for current user
+      const initLiked = {};
       if (user?.id) {
-        const initLiked = {};
         incomingComments.forEach(c => {
           if (Array.isArray(c.likes) && c.likes.some(l => l?.user?.id === user.id)) {
             initLiked[c.id] = true;
@@ -147,34 +158,100 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
             });
           }
         });
-        setLikedComments(initLiked);
-      } else {
-        setLikedComments({});
       }
+      setLikedComments(initLiked);
+      
+      // Store initial state in override to prevent reset
+      const initialIsLiked = effectiveUserId && Array.isArray(currentPost.likes) ? currentPost.likes.some(l => l?.user?.id === effectiveUserId) : false;
+      postOverridesRef.current[pid] = {
+        isLiked: initialIsLiked,
+        likesCount: initialLikes,
+        commentsList: incomingComments,
+        likedComments: initLiked
+      };
     }
-  }, [currentIndex, currentPost?.id]);
+  }, [currentIndex, currentPost?.id, effectiveUserId, user?.id]);
 
   const handleLike = async () => {
-    if (!effectiveUserId || !currentPost?.id) return;
+    // Enhanced validation for GraphQL operations
+    if (!effectiveUserId || !currentPost?.id) {
+      console.warn('❌ Cannot like post: missing user ID or post ID', { 
+        effectiveUserId, 
+        postId: currentPost?.id,
+        user: user?.id,
+        currentUser: currentUser?.id
+      });
+      return;
+    }
+
+    // Validate that IDs are proper strings/numbers, not objects
+    const validUserId = String(effectiveUserId).trim();
+    const validPostId = String(currentPost.id).trim();
+    
+    if (!validUserId || validUserId === 'undefined' || validUserId === 'null') {
+      console.warn('❌ Invalid user ID for like operation:', { effectiveUserId, validUserId });
+      return;
+    }
+    
+    if (!validPostId || validPostId === 'undefined' || validPostId === 'null') {
+      console.warn('❌ Invalid post ID for like operation:', { postId: currentPost.id, validPostId });
+      return;
+    }
+
+    console.log(`👍 Attempting to ${isLiked ? 'unlike' : 'like'} post`, { 
+      userId: validUserId, 
+      postId: validPostId,
+      currentLiked: isLiked,
+      currentCount: likesCount
+    });
+
     const nextLiked = !isLiked;
     const nextCount = nextLiked ? likesCount + 1 : Math.max(0, likesCount - 1);
+    
+    // Optimistic UI update
     setIsLiked(nextLiked);
     setLikesCount(nextCount);
+    
     // persist per-post override so UI doesn't revert
     const pid = String(currentPost.id);
     postOverridesRef.current[pid] = {
       ...(postOverridesRef.current[pid] || {}),
       isLiked: nextLiked,
       likesCount: nextCount,
-      commentsList
+      commentsList,
+      likedComments
     };
+    
     try {
-      await likePostMutation({ variables: { userId: String(effectiveUserId), postId: String(currentPost.id) } });
+      await likePostMutation({ 
+        variables: { 
+          userId: validUserId, 
+          postId: validPostId 
+        } 
+      });
+      console.log(`✅ Successfully ${nextLiked ? 'liked' : 'unliked'} post ${validPostId}`);
     } catch (err) {
-      // revert on error
+      // Enhanced error handling with revert
+      console.error('❌ Like error details:', {
+        error: err,
+        message: err.message,
+        variables: { userId: validUserId, postId: validPostId },
+        networkError: err.networkError,
+        graphQLErrors: err.graphQLErrors
+      });
+      
+      // revert optimistic update on error
       setIsLiked(!nextLiked);
       setLikesCount(prev => (!nextLiked ? prev + 1 : Math.max(0, prev - 1)));
-      console.error('Like error:', err);
+      
+      // Revert override as well
+      postOverridesRef.current[pid] = {
+        ...(postOverridesRef.current[pid] || {}),
+        isLiked: !nextLiked,
+        likesCount: !nextLiked ? likesCount + 1 : Math.max(0, likesCount - 1),
+        commentsList,
+        likedComments
+      };
     }
   };
 
@@ -184,7 +261,34 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
   };
 
   const handleComment = async () => {
-    if (!comment.trim() || !effectiveUserId || !currentPost?.id) return;
+    if (!comment.trim() || !effectiveUserId || !currentPost?.id) {
+      console.warn('❌ Cannot comment on post: missing data', { 
+        hasComment: !!comment.trim(), 
+        effectiveUserId, 
+        postId: currentPost?.id 
+      });
+      return;
+    }
+
+    // Validate IDs for GraphQL operations
+    const validUserId = String(effectiveUserId).trim();
+    const validPostId = String(currentPost.id).trim();
+    
+    if (!validUserId || validUserId === 'undefined' || validUserId === 'null') {
+      console.warn('❌ Invalid user ID for comment operation:', { effectiveUserId, validUserId });
+      return;
+    }
+    
+    if (!validPostId || validPostId === 'undefined' || validPostId === 'null') {
+      console.warn('❌ Invalid post ID for comment operation:', { postId: currentPost.id, validPostId });
+      return;
+    }
+
+    console.log('💬 Attempting to add comment', { 
+      userId: validUserId, 
+      postId: validPostId,
+      commentText: comment.trim()
+    });
     const newComment = {
       id: `local-${Date.now()}`,
       text: comment.trim(),
@@ -204,7 +308,8 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
         ...(postOverridesRef.current[pid] || {}),
         isLiked,
         likesCount,
-        commentsList: updated
+        commentsList: updated,
+        likedComments
       };
       return updated;
     });
@@ -212,7 +317,13 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
     // ensure comments section remains visible like SocialPost
     if (!showComments) setShowComments(true);
     try {
-      const { data } = await commentPostMutation({ variables: { userId: String(effectiveUserId), postId: String(currentPost.id), text: newComment.text } });
+      const { data } = await commentPostMutation({ 
+        variables: { 
+          userId: validUserId, 
+          postId: validPostId, 
+          text: newComment.text 
+        } 
+      });
       const serverComments = data?.CommentPost;
       if (Array.isArray(serverComments)) {
         setCommentsList(serverComments);
@@ -221,13 +332,23 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
           ...(postOverridesRef.current[pid] || {}),
           isLiked,
           likesCount,
-          commentsList: serverComments
+          commentsList: serverComments,
+          likedComments
         };
+        console.log(`✅ Successfully added comment to post ${validPostId}`, { commentsCount: serverComments.length });
       }
     } catch (err) {
+      // Enhanced error handling
+      console.error('❌ Comment error details:', {
+        error: err,
+        message: err.message,
+        variables: { userId: validUserId, postId: validPostId, text: newComment.text },
+        networkError: err.networkError,
+        graphQLErrors: err.graphQLErrors
+      });
+      
       // revert on error
       setCommentsList(prev => prev.filter(c => c.id !== newComment.id));
-      console.error('Comment error:', err);
     }
   };
 
@@ -259,39 +380,117 @@ const PostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => {
 
   const handleCommentLike = async (commentId) => {
     if (!effectiveUserId || !currentPost?.id) return;
+    
+    // Validate IDs
+    const validUserId = String(effectiveUserId).trim();
+    const validPostId = String(currentPost.id).trim();
+    const validCommentId = String(commentId).trim();
+    
+    if (!validUserId || !validPostId || !validCommentId) {
+      console.warn('❌ Invalid IDs for comment like:', { validUserId, validPostId, validCommentId });
+      return;
+    }
+    
     const next = !likedComments[commentId];
-    setLikedComments(prev => ({ ...prev, [commentId]: next }));
+    const updatedLikedComments = { ...likedComments, [commentId]: next };
+    setLikedComments(updatedLikedComments);
+    
+    // Update post override to maintain state
+    const pid = String(currentPost.id);
+    postOverridesRef.current[pid] = {
+      ...(postOverridesRef.current[pid] || {}),
+      isLiked,
+      likesCount,
+      commentsList,
+      likedComments: updatedLikedComments
+    };
+    
     try {
-      await likeComment({ variables: { userId: String(effectiveUserId), postId: String(currentPost.id), commentId: String(commentId) } });
+      await likeComment({ variables: { userId: validUserId, postId: validPostId, commentId: validCommentId } });
     } catch (e) {
-      setLikedComments(prev => ({ ...prev, [commentId]: !next }));
+      console.error('❌ Comment like error:', e);
+      const revertedLikedComments = { ...likedComments, [commentId]: !next };
+      setLikedComments(revertedLikedComments);
+      postOverridesRef.current[pid].likedComments = revertedLikedComments;
     }
   };
 
   const handleReplyLike = async (replyId, commentId) => {
     if (!effectiveUserId || !currentPost?.id) return;
+    
+    // Validate IDs
+    const validUserId = String(effectiveUserId).trim();
+    const validPostId = String(currentPost.id).trim();
+    const validCommentId = String(commentId).trim();
+    const validReplyId = String(replyId).trim();
+    
+    if (!validUserId || !validPostId || !validCommentId || !validReplyId) {
+      console.warn('❌ Invalid IDs for reply like:', { validUserId, validPostId, validCommentId, validReplyId });
+      return;
+    }
+    
     const next = !likedComments[replyId];
-    setLikedComments(prev => ({ ...prev, [replyId]: next }));
+    const updatedLikedComments = { ...likedComments, [replyId]: next };
+    setLikedComments(updatedLikedComments);
+    
+    // Update post override to maintain state
+    const pid = String(currentPost.id);
+    postOverridesRef.current[pid] = {
+      ...(postOverridesRef.current[pid] || {}),
+      isLiked,
+      likesCount,
+      commentsList,
+      likedComments: updatedLikedComments
+    };
+    
     try {
-      await likeReply({ variables: { userId: String(effectiveUserId), postId: String(currentPost.id), commentId: String(commentId), replyId: String(replyId) } });
+      await likeReply({ variables: { userId: validUserId, postId: validPostId, commentId: validCommentId, replyId: validReplyId } });
     } catch (e) {
-      setLikedComments(prev => ({ ...prev, [replyId]: !next }));
+      console.error('❌ Reply like error:', e);
+      const revertedLikedComments = { ...likedComments, [replyId]: !next };
+      setLikedComments(revertedLikedComments);
+      postOverridesRef.current[pid].likedComments = revertedLikedComments;
     }
   };
 
   const handleReplyToComment = async (commentId) => {
     const text = (replyTexts[commentId] || '').trim();
     if (!text || !effectiveUserId || !currentPost?.id) return;
+    
+    // Validate IDs
+    const validUserId = String(effectiveUserId).trim();
+    const validPostId = String(currentPost.id).trim();
+    const validCommentId = String(commentId).trim();
+    
+    if (!validUserId || !validPostId || !validCommentId) {
+      console.warn('❌ Invalid IDs for reply to comment:', { validUserId, validPostId, validCommentId });
+      return;
+    }
+    
     try {
-      const { data } = await replyToComment({ variables: { userId: String(effectiveUserId), postId: String(currentPost.id), commentId: String(commentId), text } });
+      const { data } = await replyToComment({ variables: { userId: validUserId, postId: validPostId, commentId: validCommentId, text } });
       const reply = data?.ReplyToComment;
       if (reply) {
-        setCommentsList(prev => prev.map(c => c.id === commentId ? { ...c, replies: [ ...(c.replies || []), reply ] } : c));
+        setCommentsList(prev => {
+          const updatedComments = prev.map(c => c.id === commentId ? { ...c, replies: [ ...(c.replies || []), reply ] } : c);
+          
+          // Update post override to maintain state
+          const pid = String(currentPost.id);
+          postOverridesRef.current[pid] = {
+            ...(postOverridesRef.current[pid] || {}),
+            isLiked,
+            likesCount,
+            commentsList: updatedComments,
+            likedComments
+          };
+          
+          return updatedComments;
+        });
       }
       setReplyTexts(prev => ({ ...prev, [commentId]: '' }));
       setReplyInputs(prev => ({ ...prev, [commentId]: false }));
     } catch (e) {
-      // ignore
+      console.error('❌ Reply to comment error:', e);
     }
   };
 

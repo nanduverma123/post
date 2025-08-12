@@ -191,6 +191,7 @@ export default function Main({ userId }) {
     variables: { userId: userId || tokens?.id },
     skip: !userId && !tokens?.id,
   });
+  console.log('📄 Posts data:', data);
 
   // Fetch user videos for reels/shorts
   const { data: videosData, loading: videosLoading, error: videosError, refetch: refetchVideos } = useQuery(GET_USER_VIDEOS, {

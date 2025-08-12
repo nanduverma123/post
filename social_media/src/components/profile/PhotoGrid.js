@@ -41,24 +41,24 @@ export default function PhotoGrid({ photos, currentUser }) {
       if (typeof item === 'string') {
         // Handle URL strings
         return {
-          id: `post-${index}`,
+          id: `post-string-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
           imageUrl: item,
-          user: currentUser || { name: 'Unknown User', profileImage: null },
+          user: currentUser || { name: 'User', username: 'user', profileImage: null },
           createdAt: new Date().toISOString(),
-          likes: 0,
+          likes: [],
           comments: [],
           caption: ''
         };
       } else if (typeof item === 'object' && item !== null) {
         // Handle post objects (preserve createdBy, likes, comments)
         return {
-          id: item.id || `post-${index}`,
+          id: item.id || item._id || `post-object-${index}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
           imageUrl: item.imageUrl || '',
           videoUrl: item.videoUrl || '',
-          user: item.user || item.createdBy || currentUser || { name: 'Unknown User', profileImage: null },
+          user: item.user || item.createdBy || currentUser || { name: 'User', username: 'user', profileImage: null },
           createdBy: item.createdBy || null,
           createdAt: item.createdAt || new Date().toISOString(),
-          likes: item.likes !== undefined ? item.likes : 0,
+          likes: Array.isArray(item.likes) ? item.likes : (typeof item.likes === 'number' ? [] : []),
           comments: Array.isArray(item.comments) ? item.comments : [],
           caption: typeof item.caption === 'string' ? item.caption : ''
         };

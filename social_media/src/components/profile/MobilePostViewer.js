@@ -124,7 +124,27 @@ const MobilePostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => 
   }, [onClose]);
 
   const handleLike = async (postId) => {
-    if (!user?.id) return;
+    if (!user?.id || !postId) return;
+    
+    // Validate IDs for GraphQL operations
+    const validUserId = String(user.id).trim();
+    const validPostId = String(postId).trim();
+    
+    if (!validUserId || validUserId === 'undefined' || validUserId === 'null') {
+      console.warn('❌ Invalid user ID for like operation:', { userId: user.id, validUserId });
+      return;
+    }
+    
+    if (!validPostId || validPostId === 'undefined' || validPostId === 'null') {
+      console.warn('❌ Invalid post ID for like operation:', { postId, validPostId });
+      return;
+    }
+    
+    console.log(`👍 Mobile attempting to ${isLiked[postId] ? 'unlike' : 'like'} post`, { 
+      userId: validUserId, 
+      postId: validPostId,
+      currentLiked: isLiked[postId]
+    });
     
     const currentLikeState = isLiked[postId] || false;
     const currentLikesCount = likes[postId] || 0;
@@ -141,9 +161,17 @@ const MobilePostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => 
     }));
     
     try {
-      await likePostMutation({ variables: { userId: user.id, postId } });
+      await likePostMutation({ variables: { userId: validUserId, postId: validPostId } });
+      console.log(`✅ Mobile successfully ${!currentLikeState ? 'liked' : 'unliked'} post ${validPostId}`);
     } catch (error) {
-      console.error('Error liking post:', error);
+      console.error('❌ Mobile like error details:', {
+        error,
+        message: error.message,
+        variables: { userId: validUserId, postId: validPostId },
+        networkError: error.networkError,
+        graphQLErrors: error.graphQLErrors
+      });
+      
       // Revert optimistic update on error
       setIsLiked(prev => ({
         ...prev,
@@ -170,7 +198,27 @@ const MobilePostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => 
   };
 
   const handleComment = async (postId, commentText) => {
-    if (!commentText.trim() || !user?.id) return;
+    if (!commentText.trim() || !user?.id || !postId) return;
+    
+    // Validate IDs for GraphQL operations
+    const validUserId = String(user.id).trim();
+    const validPostId = String(postId).trim();
+    
+    if (!validUserId || validUserId === 'undefined' || validUserId === 'null') {
+      console.warn('❌ Invalid user ID for comment operation:', { userId: user.id, validUserId });
+      return;
+    }
+    
+    if (!validPostId || validPostId === 'undefined' || validPostId === 'null') {
+      console.warn('❌ Invalid post ID for comment operation:', { postId, validPostId });
+      return;
+    }
+    
+    console.log('💬 Mobile attempting to add comment', { 
+      userId: validUserId, 
+      postId: validPostId,
+      commentText: commentText.trim()
+    });
     
     const currentCommentCount = commentCounts[postId] || 0;
     
@@ -185,7 +233,7 @@ const MobilePostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => 
       id: `local-${Date.now()}`,
       text: commentText.trim(),
       user: {
-        id: user.id,
+        id: validUserId,
         name: user.name || 'You',
         username: user.username || (user.name || 'you').toLowerCase(),
         profileImage: user.profileImage || null
@@ -199,9 +247,17 @@ const MobilePostViewer = ({ posts, initialIndex = 0, onClose, currentUser }) => 
     }));
     
     try {
-      await commentPostMutation({ variables: { userId: user.id, postId, text: commentText } });
+      await commentPostMutation({ variables: { userId: validUserId, postId: validPostId, text: commentText } });
+      console.log(`✅ Mobile successfully added comment to post ${validPostId}`);
     } catch (error) {
-      console.error('Error commenting on post:', error);
+      console.error('❌ Mobile comment error details:', {
+        error,
+        message: error.message,
+        variables: { userId: validUserId, postId: validPostId, text: commentText },
+        networkError: error.networkError,
+        graphQLErrors: error.graphQLErrors
+      });
+      
       // Revert optimistic update on error
       setCommentCounts(prev => ({
         ...prev,
